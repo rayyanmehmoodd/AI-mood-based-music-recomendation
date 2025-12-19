@@ -1,0 +1,4 @@
+track_name,danceability,energy,loudness,speechiness,acousticness,instrumentalness,liveness,valence,tempo,duration_ms
+My New Song 1,0.75,0.8,-5.5,0.05,0.15,0.0,0.12,0.85,128.0,210000
+My New Song 2,0.60,0.65,-7.2,0.08,0.35,0.0,0.18,0.55,110.0,195000
+My New Song 3,0.45,0.40,-10.5,0.12,0.75,0.2,0.25,0.30,95.0,240000

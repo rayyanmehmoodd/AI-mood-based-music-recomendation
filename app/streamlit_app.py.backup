@@ -1,0 +1,1808 @@
+"""
+Streamlit Web Application for Emotion-Based Music Recommendation
+Interactive dashboard with real-time webcam emotion detection.
+Supports any CSV music dataset.
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import cv2
+from PIL import Image
+import time
+import os
+import sys
+import io
+
+# Add src to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.data_processor import DataProcessor
+from src.clustering import MusicClusterer
+from src.emotion_detector import EmotionDetector
+from src.popularity_predictor import PopularityPredictor
+from src.emotion_music_mapper import EmotionMusicMapper
+
+# Page configuration
+st.set_page_config(
+    page_title="🎵 Mood Music",
+    page_icon="🎵",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Custom CSS - Spotify/Shazam inspired design
+st.markdown("""
+<style>
+    /* Main background */
+    .stApp {
+        background: linear-gradient(180deg, #121212 0%, #1a1a1a 100%);
+    }
+    
+    /* Hide default Streamlit elements */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Typography */
+    .main-title {
+        font-size: 3.5rem;
+        font-weight: 900;
+        background: linear-gradient(135deg, #1DB954 0%, #1ed760 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        margin: 2rem 0;
+        letter-spacing: -2px;
+    }
+    
+    .section-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #ffffff;
+        margin: 2rem 0 1rem 0;
+    }
+    
+    .subtitle {
+        font-size: 1rem;
+        color: #b3b3b3;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    
+    /* Cards */
+    .mood-card {
+        background: linear-gradient(135deg, #1DB954 0%, #1ed760 100%);
+        padding: 2rem;
+        border-radius: 20px;
+        color: white;
+        text-align: center;
+        margin: 1rem 0;
+        box-shadow: 0 8px 32px rgba(29, 185, 84, 0.3);
+        transition: transform 0.2s;
+    }
+    
+    .mood-card:hover {
+        transform: translateY(-5px);
+    }
+    
+    .song-card {
+        background: #282828;
+        padding: 1.5rem;
+        border-radius: 12px;
+        margin: 0.8rem 0;
+        border-left: 4px solid #1DB954;
+        transition: all 0.2s;
+    }
+    
+    .song-card:hover {
+        background: #333333;
+        transform: translateX(5px);
+    }
+    
+    .cluster-pill {
+        display: inline-block;
+        background: #1DB954;
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        margin: 0.5rem;
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+    
+    /* Camera and Radio Inputs */
+    [data-testid="stCameraInput"] {
+        border-radius: 16px;
+        overflow: hidden;
+        border: 2px solid #282828;
+    }
+    
+    .stRadio > div {
+        background: #282828;
+        border-radius: 12px;
+        padding: 0.75rem;
+    }
+    
+    /* Selectbox & Slider */
+    .stSelectbox > div > div {
+        background: #282828;
+        border-radius: 8px;
+    }
+    
+    .stSlider > div > div {
+        background: #282828;
+    }
+    
+    /* Buttons */
+    .stButton>button {
+        background: linear-gradient(135deg, #1DB954 0%, #1ed760 100%);
+        color: white;
+        border: none;
+        border-radius: 50px;
+        padding: 0.8rem 2rem;
+        font-weight: 700;
+        font-size: 1rem;
+        transition: all 0.3s;
+        box-shadow: 0 4px 15px rgba(29, 185, 84, 0.4);
+    }
+    
+    .stButton>button:hover {
+        transform: scale(1.05);
+        box-shadow: 0 6px 20px rgba(29, 185, 84, 0.6);
+    }
+    
+    /* Upload section */
+    .upload-box {
+        background: #282828;
+        border: 2px dashed #1DB954;
+        border-radius: 20px;
+        padding: 3rem;
+        text-align: center;
+        margin: 2rem 0;
+    }
+    
+    /* Metrics */
+    .metric-box {
+        background: #282828;
+        padding: 1.5rem;
+        border-radius: 15px;
+        text-align: center;
+        margin: 0.5rem 0;
+    }
+    
+    .metric-value {
+        font-size: 2.5rem;
+        font-weight: 900;
+        color: #1DB954;
+    }
+    
+    .metric-label {
+        font-size: 0.9rem;
+        color: #b3b3b3;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2rem;
+        background: transparent;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: transparent;
+        color: #b3b3b3;
+        border: none;
+        font-weight: 600;
+        font-size: 1.1rem;
+        padding: 1rem 2rem;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        color: #1DB954;
+        border-bottom: 3px solid #1DB954;
+    }
+    
+    /* Camera input */
+    [data-testid="stCameraInput"] {
+        border-radius: 20px;
+        overflow: hidden;
+    }
+    
+    /* Dataframes */
+    .stDataFrame {
+        background: #282828;
+        border-radius: 15px;
+    }
+    
+    /* Sliders */
+    .stSlider {
+        padding: 1rem 0;
+    }
+    
+    /* Text color overrides */
+    .stMarkdown, p, span, label {
+        color: #ffffff !important;
+    }
+    
+    .stCaption {
+        color: #b3b3b3 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+@st.cache_resource
+def load_models():
+    """Load pre-trained models."""
+    models = {}
+    
+    # Initialize components
+    models['data_processor'] = DataProcessor()
+    models['clusterer'] = MusicClusterer()
+    models['emotion_detector'] = EmotionDetector(use_deepface=True)
+    models['predictor'] = PopularityPredictor()
+    models['mapper'] = EmotionMusicMapper()
+    
+    return models
+
+
+def process_uploaded_csv(uploaded_file) -> pd.DataFrame:
+    """Process an uploaded CSV file."""
+    try:
+        # Read CSV
+        df = pd.read_csv(uploaded_file)
+        return df
+    except Exception as e:
+        st.error(f"Error reading CSV: {e}")
+        return None
+
+
+def process_music_data(df: pd.DataFrame, models: dict) -> pd.DataFrame:
+    """Process music data through the pipeline."""
+    processor = models['data_processor']
+    clusterer = models['clusterer']
+    
+    # Set raw data and process
+    processor.raw_data = df
+    processor._detect_columns()
+    processor.clean_data()
+    
+    # Get features for clustering
+    X, features = processor.get_features(feature_set='clustering', normalize=True)
+    
+    if len(features) > 0:
+        # Cluster the data
+        from sklearn.preprocessing import StandardScaler
+        labels = clusterer.fit_kmeans(X.values, n_clusters=min(5, len(df)//10 + 2))
+        processor.processed_data['cluster'] = labels
+        
+        # Get cluster profiles
+        profiles = clusterer.get_cluster_profiles(X, labels)
+        models['mapper'].set_cluster_profiles(profiles)
+        
+        st.success(f"✓ Processed {len(df)} tracks into {len(set(labels))} clusters")
+    else:
+        st.warning("⚠ Could not detect audio features - using random clusters")
+        processor.processed_data['cluster'] = np.random.randint(0, 5, len(df))
+    
+    return processor.processed_data
+
+
+# Sample data functionality removed - app now requires user to upload CSV
+
+
+def detect_emotion_from_webcam():
+    """Capture and analyze emotion from webcam."""
+    cap = cv2.VideoCapture(0)
+    
+    if not cap.isOpened():
+        return None, "Could not access webcam. Try using 'Select Your Mood' option instead."
+        
+    # Capture frame
+    for _ in range(10):  # Skip initial frames
+        cap.read()
+        
+    ret, frame = cap.read()
+    cap.release()
+    
+    if not ret:
+        return None, "Could not capture frame. Try using 'Select Your Mood' option instead."
+        
+    return frame, None
+
+
+def main():
+    """Main application with Spotify-like interface."""
+    
+    # Header
+    st.markdown('<h1 class="main-title">🎵 Mood Music</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">AI-Powered Music Recommendations Based on Your Emotions</p>', unsafe_allow_html=True)
+    
+    # Load models
+    with st.spinner("Loading AI models..."):
+        models = load_models()
+    
+    # File upload - prominent and centered
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown('<div class="upload-box">', unsafe_allow_html=True)
+        st.markdown("### 📁 Upload Your Music Library")
+        uploaded_file = st.file_uploader(
+            "Drop your CSV file here",
+            type=['csv'],
+            help="CSV with audio features: danceability, energy, valence, tempo, etc.",
+            label_visibility="collapsed"
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    if uploaded_file is None:
+        # Welcome screen
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            <div class="metric-box">
+                <div class="metric-value">📷</div>
+                <div class="metric-label">Emotion Detection</div>
+                <p style="color: #b3b3b3; margin-top: 1rem;">Analyze your mood through facial recognition</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div class="metric-box">
+                <div class="metric-value">🎵</div>
+                <div class="metric-label">Smart Recommendations</div>
+                <p style="color: #b3b3b3; margin-top: 1rem;">Get personalized playlists based on your emotions</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div class="metric-box">
+                <div class="metric-value">📊</div>
+                <div class="metric-label">Popularity Prediction</div>
+                <p style="color: #b3b3b3; margin-top: 1rem;">Predict song popularity using AI</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        st.info("👆 **Upload your music dataset to get started**")
+        return
+    
+    # Process uploaded data
+    with st.spinner("🎵 Processing your music library..."):
+        raw_df = process_uploaded_csv(uploaded_file)
+        if raw_df is None:
+            st.error("❌ Could not process the file. Please check your CSV format.")
+            return
+        
+        music_data = process_music_data(raw_df, models)
+        if music_data is None or len(music_data) == 0:
+            st.error("❌ No valid data found in the file.")
+            return
+    
+    # Success message with stats
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown(f"""
+        <div class="metric-box">
+            <div class="metric-value">{len(music_data)}</div>
+            <div class="metric-label">Total Songs</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        n_clusters = len(music_data['cluster'].unique()) if 'cluster' in music_data.columns else 0
+        st.markdown(f"""
+        <div class="metric-box">
+            <div class="metric-value">{n_clusters}</div>
+            <div class="metric-label">Clusters</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        processor = models['data_processor']
+        n_features = len(processor.detected_features)
+        st.markdown(f"""
+        <div class="metric-box">
+            <div class="metric-value">{n_features}</div>
+            <div class="metric-label">Audio Features</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        has_popularity = any('popularity' in col.lower() for col in music_data.columns)
+        st.markdown(f"""
+        <div class="metric-box">
+            <div class="metric-value">{"✓" if has_popularity else "✗"}</div>
+            <div class="metric-label">Popularity Data</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Main navigation - 3 sections
+    tab1, tab2, tab3 = st.tabs(["🎵 Discover Music", "🔍 Clusters & Moods", "📊 Popularity Predictor"])
+    
+    with tab1:
+        show_music_discovery(models, music_data)
+    
+    with tab2:
+        show_clusters_and_moods(models, music_data)
+    
+    with tab3:
+        show_analytics(models, music_data)
+
+
+# Section Functions
+def show_music_discovery(models, music_data):
+    """Music discovery section - emotion detection and recommendations."""
+    
+    st.markdown('<h2 class="section-title">Discover Your Perfect Playlist</h2>', unsafe_allow_html=True)
+    st.caption("Let AI detect your mood and recommend songs that match your vibe")
+    
+    # Two columns: Detection | Recommendations
+    col_detect, col_recommend = st.columns([1, 1.5])
+    
+    with col_detect:
+        # Mood selection method
+        detection_method = st.radio(
+            "How do you want to select your mood?",
+            ["📷 Camera Detection", "😊 Manual Selection"],
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+        
+        if detection_method == "📷 Camera Detection":
+            st.markdown("### 📷 Capture Your Mood")
+            camera_photo = st.camera_input("", key="camera_input")
+            
+            if camera_photo is not None:
+                image = Image.open(camera_photo)
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+                frame = np.array(image)
+                frame = frame[:, :, ::-1]
+                
+                with st.spinner("🔍 Analyzing..."):
+                    try:
+                        result = models['emotion_detector'].detect_emotion(frame)
+                        
+                        if 'error' in result or not result.get('face_detected'):
+                            st.error("❌ No face detected")
+                        else:
+                            emotion = result.get('dominant_emotion', 'Neutral')
+                            confidence = result.get('confidence', 0.5)
+                            scores = result.get('emotion_scores', {})
+                            
+                            st.session_state['current_emotion'] = emotion
+                            st.session_state['emotion_confidence'] = confidence
+                            st.session_state['emotion_scores'] = scores
+                            
+                            st.success(f"✅ Detected: **{emotion}** ({confidence:.0%})")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+            else:
+                st.info("📸 Take a photo to detect your mood")
+        
+        else:  # Manual Selection
+            st.markdown("### 😊 Select Your Mood")
+            emotions = ['Happy', 'Sad', 'Angry', 'Fear', 'Surprise', 'Neutral']
+            emotion_emojis = {'Happy': '😊', 'Sad': '😢', 'Angry': '😠', 'Fear': '😨', 'Surprise': '😲', 'Neutral': '😐'}
+            
+            # Create 2x3 grid of emotion buttons
+            for i in range(0, len(emotions), 3):
+                cols = st.columns(3)
+                for j, col in enumerate(cols):
+                    if i + j < len(emotions):
+                        emotion = emotions[i + j]
+                        emoji = emotion_emojis[emotion]
+                        if col.button(f"{emoji} {emotion}", use_container_width=True, key=f"emotion_{emotion}"):
+                            st.session_state['current_emotion'] = emotion
+                            st.session_state['emotion_confidence'] = 1.0
+                            st.rerun()
+        
+        # Display selected emotion
+        if 'current_emotion' in st.session_state:
+            emotion = st.session_state['current_emotion']
+            confidence = st.session_state.get('emotion_confidence', 1.0)
+            
+            st.markdown("---")
+            st.markdown(f"""
+            <div class="mood-card">
+                <h2>{get_emotion_emoji(emotion)} {emotion}</h2>
+                <p>Confidence: {confidence:.0%}</p>
+                <p style="font-size: 0.9rem; opacity: 0.9;">{models['mapper'].get_mood_description(emotion)}</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with col_recommend:
+        if 'current_emotion' in st.session_state:
+            display_recommendations(models, music_data, st.session_state['current_emotion'])
+        else:
+            st.markdown("### 🎵 Your Playlist")
+            st.info("👈 Select or detect your mood to see recommendations")
+
+
+def show_clusters_and_moods(models, music_data):
+    """Clusters and emotion mapping section."""
+    
+    st.markdown('<h2 class="section-title">Music Clusters & Mood Mapping</h2>', unsafe_allow_html=True)
+    st.caption("Explore how songs are grouped and which clusters match different emotions")
+    
+    # Clustering controls
+    st.markdown("### 🎯 Create Music Clusters")
+    
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        algorithm = st.selectbox(
+            "Clustering Algorithm",
+            ["K-Means", "Hierarchical"],
+            label_visibility="collapsed"
+        )
+    with col2:
+        n_clusters = st.slider("Clusters", 2, 10, 5, label_visibility="collapsed")
+    with col3:
+        if algorithm == "Hierarchical":
+            linkage = st.selectbox("Linkage", ['ward', 'complete', 'average'], label_visibility="collapsed")
+        else:
+            linkage = None
+    
+    if st.button(f"▶️ Run {algorithm} Clustering", type="primary", use_container_width=True):
+        show_clustering_results(models, music_data, algorithm, n_clusters, linkage)
+    
+    st.caption("💡 Adjust parameters and click the button to re-cluster your songs")
+    
+    # Show results if clustering exists
+    if 'cluster' in music_data.columns:
+        st.markdown("---")
+        
+        # Emotion to Cluster Mapping
+        st.markdown("### 🎭 Emotion → Cluster Mapping")
+        
+        emotion_mapper = models['mapper']
+        if emotion_mapper.cluster_profiles is not None:
+            emotions = ['Happy', 'Sad', 'Angry', 'Fear', 'Surprise', 'Neutral']
+            
+            # Display as pills/badges
+            for emotion in emotions:
+                target_clusters = emotion_mapper.get_clusters_for_emotion(emotion)
+                if target_clusters:
+                    emoji = get_emotion_emoji(emotion)
+                    clusters_html = ''.join([f'<span class="cluster-pill">Cluster {c}</span>' for c in target_clusters[:3]])
+                    
+                    if emotion == 'Happy':
+                        desc = "High energy, positive, upbeat songs"
+                    elif emotion == 'Sad':
+                        desc = "Low energy, melancholic, slower songs"
+                    elif emotion == 'Angry':
+                        desc = "High energy, intense, fast-paced songs"
+                    elif emotion == 'Fear':
+                        desc = "Medium energy, calming, soothing songs"
+                    elif emotion == 'Surprise':
+                        desc = "High energy, dynamic, exciting songs"
+                    else:
+                        desc = "Balanced, diverse selection of songs"
+                    
+                    st.markdown(f"""
+                    <div class="song-card">
+                        <h3>{emoji} {emotion}</h3>
+                        <p style="color: #b3b3b3;">{desc}</p>
+                        <div style="margin-top: 1rem;">{clusters_html}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        # Visualization
+        st.markdown("---")
+        st.markdown("### 📊 Cluster Visualization")
+        show_cluster_visualization(models, music_data)
+
+
+def show_clustering_results(models, music_data, algorithm, n_clusters, linkage):
+    """Run clustering and update data."""
+    numeric_cols = music_data.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns.tolist()
+    exclude = ['cluster', 'id', 'track_id', 'popularity', 'predicted_popularity', 'index']
+    available = [f for f in numeric_cols if f.lower() not in [e.lower() for e in exclude]]
+    
+    priority_features = ['danceability', 'energy', 'valence', 'loudness', 'tempo', 'acousticness']
+    clustering_features = [f for f in priority_features if f in music_data.columns]
+    
+    if not clustering_features:
+        clustering_features = available[:6] if available else []
+    
+    if not clustering_features:
+        st.error("❌ No numeric features available for clustering")
+        return
+    
+    with st.spinner(f"Running {algorithm} clustering with {n_clusters} clusters..."):
+        try:
+            X = music_data[clustering_features].fillna(0)
+            X_scaled = models['clusterer'].scaler.fit_transform(X)
+            
+            if algorithm == "K-Means":
+                labels = models['clusterer'].fit_kmeans(X_scaled, n_clusters=n_clusters)
+            else:
+                labels = models['clusterer'].fit_hierarchical(X_scaled, n_clusters=n_clusters, linkage=linkage)
+            
+            music_data['cluster'] = labels
+            
+            profiles = music_data[music_data['cluster'] != -1].groupby('cluster')[clustering_features].mean()
+            models['mapper'].set_cluster_profiles(profiles)
+            
+            st.success(f"✅ {algorithm} clustering completed with {n_clusters} clusters!")
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"❌ Clustering failed: {e}")
+
+
+def show_cluster_visualization(models, music_data):
+    """Display cluster visualization."""
+    try:
+        from sklearn.decomposition import PCA
+        import plotly.express as px
+        
+        numeric_cols = music_data.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns.tolist()
+        exclude = ['cluster', 'id', 'track_id', 'popularity', 'predicted_popularity', 'index']
+        available = [f for f in numeric_cols if f.lower() not in [e.lower() for e in exclude]]
+        priority_features = ['danceability', 'energy', 'valence', 'loudness', 'tempo', 'acousticness']
+        clustering_features = [f for f in priority_features if f in music_data.columns]
+        
+        X = music_data[clustering_features].fillna(0)
+        
+        if hasattr(models['clusterer'], 'scaler') and hasattr(models['clusterer'].scaler, 'mean_'):
+            X_scaled = models['clusterer'].scaler.transform(X)
+        else:
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+        
+        pca = PCA(n_components=2, random_state=42)
+        X_2d = pca.fit_transform(X_scaled)
+        
+        plot_df = pd.DataFrame({
+            'Component 1': X_2d[:, 0],
+            'Component 2': X_2d[:, 1],
+            'Cluster': music_data['cluster'].astype(str)
+        })
+        
+        if 'track_name' in music_data.columns:
+            plot_df['Song'] = music_data['track_name'].values
+        
+        fig = px.scatter(
+            plot_df,
+            x='Component 1',
+            y='Component 2',
+            color='Cluster',
+            hover_data=['Song'] if 'Song' in plot_df.columns else None,
+            title='Songs Grouped by Similarity',
+            height=500
+        )
+        
+        fig.update_layout(
+            plot_bgcolor='#282828',
+            paper_bgcolor='#282828',
+            font=dict(color='#ffffff')
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Songs closer together are more similar in style and mood")
+        
+    except Exception as e:
+        st.warning(f"Could not create visualization: {e}")
+
+
+def manual_mode(models, music_data):
+    """Manual mood selection mode."""
+    
+    st.markdown("### 😊 Select Your Mood")
+    
+    emotions = ['Happy', 'Sad', 'Angry', 'Fear', 'Surprise', 'Neutral']
+    
+    # Emotion selection grid
+    cols = st.columns(6)
+    emojis = ['😊', '😢', '😠', '😨', '😲', '😐']
+    
+    selected_emotion = None
+    for i, (col, emotion, emoji) in enumerate(zip(cols, emotions, emojis)):
+        with col:
+            if st.button(f"{emoji}\n{emotion}", use_container_width=True):
+                selected_emotion = emotion
+                st.session_state['manual_emotion'] = emotion
+                
+    # Use stored emotion if available
+    if 'manual_emotion' in st.session_state and selected_emotion is None:
+        selected_emotion = st.session_state['manual_emotion']
+        
+    if selected_emotion:
+        st.markdown(f"""
+        <div class="mood-card">
+            <h2>{get_emotion_emoji(selected_emotion)} {selected_emotion}</h2>
+            <p>{models['mapper'].get_mood_description(selected_emotion)}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        display_recommendations(models, music_data, selected_emotion)
+
+
+def display_recommendations(models, music_data, emotion):
+    """Display music recommendations for an emotion."""
+    
+    st.markdown(f"### 🎵 Recommended Playlist for {emotion}")
+    
+    # Get recommendations
+    cluster_labels = music_data['cluster'].values if 'cluster' in music_data.columns else np.zeros(len(music_data))
+    
+    recommendations = models['mapper'].recommend_songs(
+        emotion=emotion,
+        music_data=music_data,
+        cluster_labels=cluster_labels,
+        n_songs=10,
+        prioritize_popular=True
+    )
+    
+    # Get column names from processor
+    processor = models['data_processor']
+    track_col = processor.column_mapping.get('track_name', 'track_name')
+    artist_col = processor.column_mapping.get('artist', 'artist')
+    pop_col = processor.column_mapping.get('popularity', 'popularity')
+    
+    # Display songs
+    for idx, (_, song) in enumerate(recommendations.iterrows(), 1):
+        with st.container():
+            col1, col2, col3 = st.columns([0.5, 3, 1])
+            
+            with col1:
+                st.markdown(f"### {idx}")
+                
+            with col2:
+                # Try to get track name from various possible columns
+                track_name = None
+                for col in [track_col, 'track_name', 'name', 'song', 'title']:
+                    if col in song.index:
+                        track_name = song[col]
+                        break
+                track_name = track_name or f'Track {idx}'
+                
+                # Try to get artist
+                artist = None
+                for col in [artist_col, 'artist', 'track_artist', 'artists']:
+                    if col in song.index:
+                        artist = song[col]
+                        break
+                artist = artist or 'Unknown Artist'
+                
+                st.markdown(f"**{track_name}**")
+                st.caption(f"by {artist}")
+                
+            with col3:
+                # Try to get popularity
+                popularity = None
+                for col in [pop_col, 'popularity', 'predicted_popularity']:
+                    if col in song.index:
+                        popularity = song[col]
+                        break
+                popularity = popularity if popularity is not None else 50
+                st.metric("Popularity", f"{popularity:.0f}")
+                
+            # Audio features (if available)
+            feature_map = [
+                ('Energy', ['energy', 'Energy']),
+                ('Danceability', ['danceability', 'Danceability']),
+                ('Valence', ['valence', 'Valence', 'positivity']),
+                ('Tempo', ['tempo', 'Tempo', 'bpm'])
+            ]
+            
+            features_col = st.columns(4)
+            for col, (label, possible_cols) in zip(features_col, feature_map):
+                for feature in possible_cols:
+                    if feature in song.index:
+                        val = song[feature]
+                        with col:
+                            if 'tempo' in feature.lower() or 'bpm' in feature.lower():
+                                st.caption(f"🎵 {label}: {val:.0f} BPM")
+                            else:
+                                st.caption(f"📊 {label}: {val:.2f}")
+                        break
+                            
+            st.divider()
+
+
+def explore_clusters(models, music_data):
+    """Explore music clusters with different unsupervised learning algorithms."""
+    
+    st.markdown("### 🔍 Explore Music Clusters (Unsupervised Learning)")
+    
+    st.info("🎯 **Unsupervised Learning**: Automatically groups similar songs based on audio features without labeled data. "
+            "Three algorithms are available: K-Means, Hierarchical, and DBSCAN.")
+    
+    # Algorithm selection
+    st.markdown("#### Choose Clustering Algorithm")
+    
+    st.markdown("### 🎯 Choose Clustering Algorithm")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**🎯 K-Means**")
+        st.caption("Fast partitioning into K spherical clusters based on centroids")
+    with col2:
+        st.markdown("**🌳 Hierarchical**")
+        st.caption("Builds tree-like nested clusters, shows relationships between groups")
+    
+    algorithm = st.radio(
+        "Select Algorithm",
+        ["K-Means", "Hierarchical"],
+        horizontal=True
+    )
+    
+    # Get features
+    numeric_cols = music_data.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns.tolist()
+    exclude = ['cluster', 'id', 'track_id', 'popularity', 'predicted_popularity', 'index']
+    available = [f for f in numeric_cols if f.lower() not in [e.lower() for e in exclude]]
+    
+    priority_features = ['danceability', 'energy', 'valence', 'loudness', 'tempo', 'acousticness']
+    clustering_features = [f for f in priority_features if f in music_data.columns]
+    
+    if not clustering_features:
+        clustering_features = available[:6] if available else []
+    
+    if not clustering_features:
+        st.error("❌ No numeric features available for clustering")
+        return
+    
+    # Algorithm parameters
+    st.markdown("---")
+    n_clusters = st.slider("Number of Clusters (K)", 2, 10, 5)
+    
+    if algorithm == "Hierarchical":
+        linkage = st.selectbox("Linkage Method", ['ward', 'complete', 'average'], index=0)
+    else:
+        linkage = None
+    
+    # Run clustering button
+    st.markdown("---")
+    if st.button(f"▶️ Run {algorithm} Clustering", type="primary", use_container_width=True):
+        with st.spinner(f"Running {algorithm} clustering with {n_clusters} clusters..."):
+            try:
+                # Prepare data
+                X = music_data[clustering_features].fillna(0)
+                X_scaled = models['clusterer'].scaler.fit_transform(X)
+                
+                # Run clustering
+                if algorithm == "K-Means":
+                    labels = models['clusterer'].fit_kmeans(X_scaled, n_clusters=n_clusters)
+                else:  # Hierarchical
+                    labels = models['clusterer'].fit_hierarchical(X_scaled, n_clusters=n_clusters, linkage=linkage)
+                
+                # Store results - force update
+                music_data['cluster'] = labels
+                
+                # Store cluster profiles for emotion mapping
+                profiles = music_data[music_data['cluster'] != -1].groupby('cluster')[clustering_features].mean()
+                models['mapper'].set_cluster_profiles(profiles)
+                
+                st.success(f"✅ {algorithm} clustering completed with {n_clusters} clusters!")
+                st.info("🔄 Scroll down to see the results and emotion mappings")
+                
+            except Exception as e:
+                st.error(f"❌ Clustering failed: {e}")
+                return
+    
+    st.caption("💡 Adjust parameters above and click the button to re-cluster your songs")
+    
+    # Show results if clustering has been done
+    if 'cluster' not in music_data.columns:
+        st.info("👆 Click the button above to run clustering")
+        return
+    
+    st.markdown("---")
+    
+    # Emotion to Cluster Mapping
+    st.markdown("### 🎭 Emotion → Cluster Mapping")
+    st.caption("This shows which song clusters will be recommended for each mood")
+    
+    # Get emotion to cluster mapping from mapper
+    emotion_mapper = models['mapper']
+    if emotion_mapper.cluster_profiles is not None:
+        emotions = ['Happy', 'Sad', 'Angry', 'Fear', 'Surprise', 'Neutral']
+        
+        mapping_data = []
+        for emotion in emotions:
+            target_clusters = emotion_mapper.get_clusters_for_emotion(emotion)
+            if target_clusters:
+                clusters_str = ', '.join([f"Cluster {c}" for c in target_clusters[:3]])
+                emoji = get_emotion_emoji(emotion)
+                profile = emotion_mapper.EMOTION_AUDIO_PROFILE[emotion]
+                
+                # Create simple description
+                if emotion == 'Happy':
+                    desc = "High energy, positive, upbeat songs"
+                elif emotion == 'Sad':
+                    desc = "Low energy, melancholic, slower songs"
+                elif emotion == 'Angry':
+                    desc = "High energy, intense, fast-paced songs"
+                elif emotion == 'Fear':
+                    desc = "Medium energy, calming, soothing songs"
+                elif emotion == 'Surprise':
+                    desc = "High energy, dynamic, exciting songs"
+                else:
+                    desc = "Balanced, diverse selection of songs"
+                
+                mapping_data.append({
+                    'Emotion': f"{emoji} {emotion}",
+                    'Will Recommend From': clusters_str,
+                    'Song Style': desc
+                })
+        
+        if mapping_data:
+            mapping_df = pd.DataFrame(mapping_data)
+            st.dataframe(mapping_df, use_container_width=True, hide_index=True)
+            
+            st.info("💡 When you select an emotion in the recommendation tabs, songs from these clusters will be prioritized based on their audio characteristics!")
+    else:
+        st.warning("Run clustering first to see emotion mappings")
+    
+    # Visualizations
+    st.markdown("---")
+    st.markdown("### 📊 How Songs Are Grouped")
+    
+    st.markdown("#### 2D Visualization")
+    st.caption("Each point is a song, colors show different clusters")
+    
+    try:
+        from sklearn.decomposition import PCA
+        import plotly.express as px
+        
+        X = music_data[clustering_features].fillna(0)
+        
+        # Use the scaler from the clusterer (already fitted during clustering)
+        if hasattr(models['clusterer'], 'scaler') and hasattr(models['clusterer'].scaler, 'mean_'):
+            X_scaled = models['clusterer'].scaler.transform(X)
+        else:
+            # If scaler not fitted, fit it now
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+        
+        pca = PCA(n_components=2, random_state=42)
+        X_2d = pca.fit_transform(X_scaled)
+        
+        plot_df = pd.DataFrame({
+            'Component 1': X_2d[:, 0],
+            'Component 2': X_2d[:, 1],
+            'Cluster': music_data['cluster'].astype(str)
+        })
+        
+        if 'track_name' in music_data.columns:
+            plot_df['Song'] = music_data['track_name'].values
+        
+        fig = px.scatter(
+            plot_df,
+            x='Component 1',
+            y='Component 2',
+            color='Cluster',
+            hover_data=['Song'] if 'Song' in plot_df.columns else None,
+            title=f'Songs Grouped by Similarity',
+            height=500
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Songs closer together are more similar in style and mood")
+        
+    except Exception as e:
+        st.warning(f"Could not create visualization: {e}")
+
+
+def show_analytics(models, music_data):
+    """Popularity prediction section."""
+    
+    st.markdown('<h2 class="section-title">Popularity Predictor</h2>', unsafe_allow_html=True)
+    st.caption("Train AI models to predict which songs will become popular")
+    
+    st.markdown("### 🎯 How It Works")
+    st.markdown("""
+    <div class="song-card">
+        <p style="margin: 0; color: #b3b3b3;">
+        Our AI analyzes audio features like <strong>energy, danceability, and tempo</strong> 
+        to predict song popularity. The model learns patterns from existing hit songs to make predictions.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Model selection
+    st.markdown("### 🤖 Select Model")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        model_type = st.selectbox(
+            "Choose prediction model",
+            ["Gradient Boosting (Recommended)", "Random Forest", "Linear Regression"],
+            label_visibility="collapsed"
+        )
+    
+    with col2:
+        if st.button("▶️ Train Model", type="primary", use_container_width=True):
+            train_popularity_model(models, music_data, model_type)
+    
+    # Show predictions if model exists
+    if hasattr(models['predictor'], 'best_model') and models['predictor'].best_model is not None:
+        st.markdown("---")
+        st.markdown("### 📊 Prediction Results")
+        
+        if 'predicted_popularity' in music_data.columns:
+            # Show top predicted songs
+            st.markdown("#### 🔥 Predicted Top Hits")
+            top_songs = music_data.nlargest(10, 'predicted_popularity')
+            
+            for idx, song in top_songs.iterrows():
+                track = song.get('track_name', 'Unknown')
+                artist = song.get('artists', 'Unknown')
+                predicted = song.get('predicted_popularity', 0)
+                actual = song.get('popularity', None)
+                
+                actual_text = f"Actual: {actual:.0f}" if actual is not None else "Actual: Unknown"
+                
+                st.markdown(f"""
+                <div class="song-card">
+                    <h3 style="margin: 0; color: #ffffff;">🎵 {track}</h3>
+                    <p style="margin: 0.5rem 0; color: #1DB954; font-weight: 600;">{artist}</p>
+                    <p style="margin: 0.5rem 0 0 0; color: #b3b3b3; font-size: 0.9rem;">
+                        Predicted Popularity: {predicted:.0f} • {actual_text}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Model performance
+            if music_data['popularity'].notna().sum() > 0:
+                st.markdown("---")
+                st.markdown("#### 📈 Model Performance")
+                
+                from sklearn.metrics import mean_absolute_error, r2_score
+                actual = music_data['popularity'].dropna()
+                predicted = music_data.loc[actual.index, 'predicted_popularity']
+                
+                mae = mean_absolute_error(actual, predicted)
+                r2 = r2_score(actual, predicted)
+                
+                col1, col2 = st.columns(2)
+                col1.metric("Mean Error", f"{mae:.1f} points")
+                col2.metric("R² Score", f"{r2:.3f}")
+                
+                st.caption("💡 Note: Popularity is inherently unpredictable (R² ~0.15-0.25 is normal)")
+        else:
+            st.info("Train the model to see predictions")
+    
+    with tab1:
+        st.markdown("#### Clustering Analysis")
+        
+        if 'cluster' in music_data.columns:
+            # Cluster metrics - dynamically detect numeric features
+            numeric_cols = music_data.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns.tolist()
+            exclude = ['cluster', 'id', 'track_id', 'popularity', 'predicted_popularity', 'index']
+            available = [f for f in numeric_cols if f.lower() not in [e.lower() for e in exclude]]
+            
+            if available:
+                from sklearn.metrics import silhouette_score
+                X = music_data[available].fillna(0).values
+                labels = music_data['cluster'].values
+                
+                try:
+                    silhouette = silhouette_score(X, labels)
+                    st.metric("Silhouette Score", f"{silhouette:.3f}")
+                    st.caption("(Score > 0.2 indicates good cluster separation)")
+                except Exception as e:
+                    st.warning(f"Could not calculate silhouette score: {e}")
+                    
+            # Show detected features
+            st.markdown("#### Detected Features for Clustering")
+            st.info(f"Using {len(available)} numeric features: {', '.join(available[:10])}{'...' if len(available) > 10 else ''}")
+                    
+            st.markdown("#### Emotion-Cluster Mapping")
+            mapping_df = models['mapper'].get_cluster_mood_distribution()
+            if not mapping_df.empty:
+                st.dataframe(mapping_df, use_container_width=True)
+        else:
+            st.info("Run clustering analysis first to see metrics.")
+            
+    with tab2:
+        st.markdown("#### 🎯 Popularity Prediction (Supervised Learning)")
+        
+        st.info("📚 **Supervised Learning**: Learns from labeled training data (songs with known popularity scores) "
+                "to predict popularity of new songs based on audio features.")
+        
+        # Train models section
+        st.markdown("### Train Prediction Models")
+        
+        algo_expander = st.expander("📖 Available Algorithms", expanded=False)
+        with algo_expander:
+            st.markdown("""
+            **1. Random Forest Regressor** ✅ (Recommended)
+            - Ensemble of decision trees
+            - Best for non-linear relationships
+            - Provides feature importance
+            - Typical R² score: 0.15-0.30 (popularity is inherently noisy)
+            
+            **2. Gradient Boosting Regressor**
+            - Sequential tree building
+            - Often slightly better than Random Forest
+            - Slower to train
+            
+            **3. Linear Regression** (Ridge/Lasso variants)
+            - Simple baseline
+            - Fast training
+            - Assumes linear relationships
+            - Lower accuracy but interpretable
+            
+            **4. Artificial Neural Network (ANN)**
+            - Deep learning approach
+            - Can capture complex patterns
+            - Requires more data
+            - May overfit on small datasets
+            
+            **Why NOT Logistic Regression?**
+            Logistic Regression is for *classification* (binary/multi-class), not regression. 
+            Popularity is a continuous value (0-100), so we use regression algorithms.
+            """)
+        
+        # Check if we have popularity data
+        popularity_col = None
+        for col in music_data.columns:
+            if 'popularity' in col.lower():
+                popularity_col = col
+                break
+        
+        if not popularity_col:
+            st.warning("⚠️ Dataset doesn't have a 'popularity' column. Cannot train prediction models.")
+            
+            st.markdown("---")
+            st.markdown("### 🎵 Fetch Popularity from Spotify API")
+            
+            st.info("""
+            **Option 1: Fetch popularity from Spotify**
+            
+            If your dataset has `track_name` and optionally `artist_name` columns, 
+            we can automatically fetch popularity scores (0-100) from Spotify API.
+            
+            **How it works:**
+            1. Searches Spotify for each song by name + artist
+            2. Retrieves the official popularity score (0-100)
+            3. Adds it to your dataset
+            4. You can then train prediction models
+            
+            **Requirements:**
+            - Spotify API credentials (free tier available)
+            - Internet connection
+            - Song names in your dataset must match Spotify catalog
+            """)
+            
+            # Check if we have track names
+            has_track_col = 'track_name' in music_data.columns or 'name' in music_data.columns or 'title' in music_data.columns
+            
+            if not has_track_col:
+                st.error("❌ Dataset needs a `track_name`, `name`, or `title` column to fetch from Spotify")
+            else:
+                # Spotify credentials input
+                with st.expander("🔑 Enter Spotify API Credentials", expanded=True):
+                    st.markdown("""
+                    **Get free Spotify API access:**
+                    1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/)
+                    2. Create an app (any name)
+                    3. Copy Client ID and Client Secret
+                    """)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        client_id = st.text_input("Spotify Client ID", type="password", key="spotify_client_id")
+                    with col2:
+                        client_secret = st.text_input("Spotify Client Secret", type="password", key="spotify_client_secret")
+                
+                # Fetch button
+                if st.button("🎵 Fetch Popularity from Spotify", type="primary"):
+                    if not client_id or not client_secret:
+                        st.error("❌ Please enter both Client ID and Client Secret")
+                    else:
+                        with st.spinner("Fetching popularity data from Spotify..."):
+                            try:
+                                from src.api_integrations import SpotifyAPI
+                                
+                                # Initialize Spotify API
+                                spotify = SpotifyAPI(client_id=client_id, client_secret=client_secret)
+                                
+                                # Authenticate
+                                if not spotify.authenticate():
+                                    st.error("❌ Authentication failed. Please check your credentials.")
+                                else:
+                                    # Detect track and artist columns
+                                    track_col = None
+                                    for col in ['track_name', 'name', 'title']:
+                                        if col in music_data.columns:
+                                            track_col = col
+                                            break
+                                    
+                                    artist_col = None
+                                    for col in ['artist_name', 'artist', 'artists']:
+                                        if col in music_data.columns:
+                                            artist_col = col
+                                            break
+                                    
+                                    st.info(f"📝 Using columns: `{track_col}` {f'+ `{artist_col}`' if artist_col else ''}")
+                                    
+                                    # Create progress bar
+                                    progress_bar = st.progress(0)
+                                    status_text = st.empty()
+                                    
+                                    # Fetch popularity for each track
+                                    popularities = []
+                                    found_count = 0
+                                    
+                                    for idx, row in music_data.iterrows():
+                                        # Build search query
+                                        query = str(row[track_col])
+                                        if artist_col:
+                                            query += f" {row[artist_col]}"
+                                        
+                                        # Search Spotify
+                                        tracks = spotify.search_track(query, limit=1)
+                                        
+                                        if tracks and len(tracks) > 0:
+                                            popularity = tracks[0].get('popularity', 50)
+                                            popularities.append(popularity)
+                                            found_count += 1
+                                        else:
+                                            # Use default if not found
+                                            popularities.append(50)
+                                        
+                                        # Update progress
+                                        progress = (idx + 1) / len(music_data)
+                                        progress_bar.progress(progress)
+                                        status_text.text(f"Processing {idx + 1}/{len(music_data)} tracks... (Found: {found_count})")
+                                        
+                                        # Rate limiting
+                                        time.sleep(0.05)
+                                    
+                                    # Add to dataframe
+                                    music_data['popularity'] = popularities
+                                    
+                                    # Update session state
+                                    st.session_state['music_data'] = music_data
+                                    
+                                    # Success message
+                                    progress_bar.progress(1.0)
+                                    st.success(f"✅ Fetched popularity for {found_count}/{len(music_data)} tracks! "
+                                             f"({found_count/len(music_data)*100:.1f}% success rate)")
+                                    
+                                    st.info("🔄 Refresh the page or re-select this tab to train models with the new popularity data.")
+                                    
+                                    # Show distribution
+                                    st.markdown("#### Popularity Distribution")
+                                    import plotly.express as px
+                                    fig = px.histogram(music_data, x='popularity', nbins=20, 
+                                                     title='Distribution of Fetched Popularity Scores')
+                                    st.plotly_chart(fig, use_container_width=True)
+                                    
+                            except Exception as e:
+                                st.error(f"❌ Error fetching data: {e}")
+                                import traceback
+                                with st.expander("🐛 Debug Info"):
+                                    st.code(traceback.format_exc())
+        else:
+            # Model training UI - Using Gradient Boosting only (best accuracy)
+            st.markdown("### 🚀 Train Prediction Model")
+            st.info("Using **Gradient Boosting Regressor** - the most accurate algorithm for this task")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                test_size = st.slider("Test Split %", 10, 40, 20, 5)
+            with col2:
+                tune_params = st.checkbox("Enable Hyperparameter Tuning", value=True, 
+                                         help="Automatically finds best parameters (slower but more accurate)")
+            
+            if st.button("🚀 Train Model", type="primary"):
+                with st.spinner("Training Gradient Boosting model..."):
+                    try:
+                        from sklearn.model_selection import train_test_split, GridSearchCV
+                        from sklearn.preprocessing import StandardScaler, RobustScaler
+                        from sklearn.ensemble import GradientBoostingRegressor
+                        
+                        # Prepare data
+                        numeric_cols = music_data.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns.tolist()
+                        
+                        # Detect popularity column name
+                        popularity_col = None
+                        for col in music_data.columns:
+                            if 'popularity' in col.lower():
+                                popularity_col = col
+                                break
+                        
+                        if not popularity_col:
+                            st.error("❌ No popularity column found in dataset")
+                            return
+                        
+                        # Use only core audio features (exclude metadata and target)
+                        core_audio_features = ['danceability', 'energy', 'loudness', 'speechiness', 
+                                              'acousticness', 'instrumentalness', 'liveness', 
+                                              'valence', 'tempo', 'duration_ms']
+                        
+                        # Only use features that exist in the dataset
+                        feature_cols = [f for f in core_audio_features if f in music_data.columns]
+                        
+                        if not feature_cols:
+                            st.error("No valid audio features found for training")
+                            return
+                        
+                        st.info(f"📊 Using '{popularity_col}' as target variable with {len(feature_cols)} audio features: {', '.join(feature_cols)}")
+                        
+                        # Clean data thoroughly
+                        df_clean = music_data[feature_cols + [popularity_col]].copy()
+                        
+                        # Remove rows with NaN in features or target
+                        df_clean = df_clean.dropna()
+                        
+                        # Fill any remaining NaNs with median (safety measure)
+                        for col in feature_cols:
+                            if df_clean[col].isna().any():
+                                df_clean[col].fillna(df_clean[col].median(), inplace=True)
+                        
+                        X_clean = df_clean[feature_cols].values
+                        y_clean = df_clean[popularity_col].values
+                        
+                        # Filter extreme values
+                        valid_mask = (y_clean >= 0) & (y_clean <= 100) & np.isfinite(y_clean)
+                        for i in range(X_clean.shape[1]):
+                            valid_mask &= np.isfinite(X_clean[:, i])
+                        
+                        X_filtered = X_clean[valid_mask]
+                        y_filtered = y_clean[valid_mask]
+                        
+                        if len(X_filtered) < 50:
+                            st.error("❌ Not enough valid data after cleaning. Need at least 50 songs.")
+                            return
+                        
+                        st.info(f"📊 Training on {len(X_filtered)} songs with {len(feature_cols)} features")
+                        
+                        # Split data
+                        X_train, X_test, y_train, y_test = train_test_split(
+                            X_filtered, y_filtered, test_size=test_size/100, random_state=42
+                        )
+                        
+                        # Use RobustScaler (better for outliers)
+                        scaler = RobustScaler()
+                        X_train_scaled = scaler.fit_transform(X_train)
+                        X_test_scaled = scaler.transform(X_test)
+                        
+                        # Verify no NaNs in scaled data
+                        if np.isnan(X_train_scaled).any() or np.isnan(X_test_scaled).any():
+                            st.error("❌ Data contains NaN values after scaling. Please check your dataset.")
+                            return
+                        
+                        models['predictor'].feature_names = feature_cols
+                        
+                        # Train with or without tuning
+                        if tune_params:
+                            st.text("🔍 Finding optimal hyperparameters (this may take 1-2 minutes)...")
+                            param_grid = {
+                                'n_estimators': [100, 200],
+                                'learning_rate': [0.05, 0.1],
+                                'max_depth': [3, 5],
+                                'min_samples_split': [5, 10]
+                            }
+                            
+                            gb = GradientBoostingRegressor(random_state=42)
+                            grid_search = GridSearchCV(
+                                gb, param_grid, cv=5, scoring='r2', n_jobs=-1, verbose=0
+                            )
+                            grid_search.fit(X_train_scaled, y_train)
+                            
+                            best_model = grid_search.best_estimator_
+                            models['predictor'].models['gradient_boosting'] = best_model
+                            
+                            st.success(f"✅ Best parameters: {grid_search.best_params_}")
+                        else:
+                            # Use optimized default parameters
+                            models['predictor'].train_gradient_boosting(
+                                X_train_scaled, y_train, 
+                                n_estimators=200, 
+                                learning_rate=0.05
+                            )
+                        
+                        # Evaluate
+                        results = models['predictor'].evaluate(X_test_scaled, y_test, model_name='gradient_boosting')
+                        
+                        st.markdown("### 📊 Model Performance")
+                        
+                        result = results['gradient_boosting']
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("R² Score", f"{result['R2']:.3f}", 
+                                     help="Proportion of variance explained (0-1, higher is better)")
+                        with col2:
+                            st.metric("RMSE", f"{result['RMSE']:.2f}", 
+                                     help="Root Mean Squared Error (lower is better)")
+                        with col3:
+                            st.metric("MAE", f"{result['MAE']:.2f}", 
+                                     help="Mean Absolute Error (lower is better)")
+                        
+                        # Interpretation
+                        if result['R2'] > 0.3:
+                            st.success("🎉 Excellent model performance!")
+                        elif result['R2'] > 0.2:
+                            st.info("👍 Good model performance")
+                        elif result['R2'] > 0.1:
+                            st.warning("⚠️ Moderate performance - popularity is hard to predict from audio alone")
+                        else:
+                            st.error("❌ Low performance - consider collecting more diverse data")
+                        
+                        # Feature importance
+                        st.markdown("### 🔍 Feature Importance")
+                        try:
+                            importance_df = models['predictor'].get_feature_importance('gradient_boosting')
+                            
+                            import plotly.express as px
+                            fig = px.bar(
+                                importance_df.sort_values('importance', ascending=True).tail(10),
+                                x='importance',
+                                y='feature',
+                                orientation='h',
+                                title='Top 10 Most Important Features for Popularity Prediction',
+                                color='importance',
+                                color_continuous_scale='Viridis'
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            st.caption(f"Most important: **{importance_df.iloc[0]['feature']}** "
+                                     f"({importance_df.iloc[0]['importance']:.1%} importance)")
+                        except Exception as e:
+                            st.warning(f"Could not display feature importance: {e}")
+                        
+                        # Store scaler for prediction
+                        st.session_state['popularity_scaler'] = scaler
+                        st.session_state['popularity_features'] = feature_cols
+                        
+                    except Exception as e:
+                        st.error(f"❌ Training failed: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+            
+            # Predict new song popularity
+            st.markdown("---")
+            st.markdown("### 🎵 Predict New Song Popularity")
+            
+            if not models['predictor'].models or 'popularity_scaler' not in st.session_state:
+                st.info("👆 Train a model first, then you can predict popularity for new songs")
+            else:
+                # Get trained features
+                trained_features = st.session_state.get('popularity_features', [])
+                
+                if not trained_features:
+                    st.warning("⚠️ Feature list not found. Please retrain the model.")
+                else:
+                    st.write(f"Upload a CSV file with these features: `{', '.join(trained_features)}`")
+                    
+                    # Option 1: Upload CSV
+                    new_song_file = st.file_uploader(
+                        "Upload New Song CSV (must have same features as training data)",
+                        type=['csv'],
+                        key='new_song_upload'
+                    )
+                    
+                    # Option 2: Manual input
+                    st.markdown("**Or enter audio features manually:**")
+                    
+                    manual_input_col1, manual_input_col2 = st.columns(2)
+                    
+                    manual_features = {}
+                    
+                    # Common audio features with reasonable defaults
+                    default_values = {
+                        'danceability': 0.5, 'energy': 0.5, 'loudness': -10.0,
+                        'speechiness': 0.1, 'acousticness': 0.3, 'instrumentalness': 0.0,
+                        'liveness': 0.2, 'valence': 0.5, 'tempo': 120.0, 'duration_ms': 200000.0
+                    }
+                    
+                    for i, feature in enumerate(trained_features):
+                        col = manual_input_col1 if i % 2 == 0 else manual_input_col2
+                        with col:
+                            default = float(default_values.get(feature, 0.5))
+                            if 'duration' in feature.lower():
+                                manual_features[feature] = st.number_input(f"{feature}", value=default, step=1000.0)
+                            elif 'tempo' in feature.lower():
+                                manual_features[feature] = st.number_input(f"{feature}", value=default, step=1.0)
+                            elif 'loudness' in feature.lower():
+                                manual_features[feature] = st.number_input(f"{feature}", value=default, min_value=-60.0, max_value=0.0, step=0.5)
+                            else:
+                                manual_features[feature] = st.number_input(f"{feature}", value=default, min_value=0.0, max_value=1.0, step=0.01)
+                    
+                    # Predict button
+                    st.markdown("---")
+                    predict_button = st.button("🔮 Predict Popularity", type="primary", use_container_width=True)
+                
+                if predict_button or new_song_file:
+                    if 'gradient_boosting' not in models['predictor'].models:
+                        st.error("❌ Please train the model first!")
+                    else:
+                        try:
+                            # Get the features that were used during training
+                            if 'popularity_features' not in st.session_state:
+                                st.error("❌ Please train the model first to establish feature set!")
+                                return
+                            
+                            trained_features = st.session_state['popularity_features']
+                            
+                            # Prepare input data
+                            if new_song_file:
+                                new_songs_df = pd.read_csv(new_song_file)
+                                st.success(f"✅ Loaded {len(new_songs_df)} songs from CSV")
+                                
+                                # Check which features are available
+                                missing_features = [f for f in trained_features if f not in new_songs_df.columns]
+                                if missing_features:
+                                    st.error(f"❌ Missing features in uploaded CSV: {', '.join(missing_features)}")
+                                    st.info(f"Required features: {', '.join(trained_features)}")
+                                    return
+                                
+                                # Extract only the features used during training
+                                X_new = new_songs_df[trained_features].fillna(0).values
+                            else:
+                                # Use manual input
+                                X_new = np.array([[manual_features[f] for f in trained_features]])
+                            
+                            # Scale features
+                            scaler = st.session_state['popularity_scaler']
+                            X_new_scaled = scaler.transform(X_new)
+                            
+                            # Predict using Gradient Boosting
+                            predictions = models['predictor'].predict(X_new_scaled, model_name='gradient_boosting')
+                            
+                            # Display results
+                            st.markdown("### 🎯 Prediction Results")
+                            
+                            if new_song_file:
+                                new_songs_df['predicted_popularity'] = predictions
+                                st.dataframe(
+                                    new_songs_df[['track_name'] + trained_features + ['predicted_popularity']] if 'track_name' in new_songs_df.columns else new_songs_df,
+                                    use_container_width=True
+                                )
+                                
+                                # Download button
+                                csv = new_songs_df.to_csv(index=False)
+                                st.download_button(
+                                    "📥 Download Results",
+                                    csv,
+                                    "predicted_popularity.csv",
+                                    "text/csv"
+                                )
+                            else:
+                                # Single prediction
+                                pred_value = predictions[0]
+                                
+                                col1, col2, col3 = st.columns([1, 2, 1])
+                                with col2:
+                                    st.markdown(f"### Predicted Popularity: **{pred_value:.1f}/100**")
+                                    
+                                    # Interpretation
+                                    if pred_value >= 70:
+                                        st.success("🔥 High Popularity - Potential Hit!")
+                                    elif pred_value >= 50:
+                                        st.info("👍 Moderate Popularity - Good Track")
+                                    elif pred_value >= 30:
+                                        st.warning("📊 Low-Moderate Popularity")
+                                    else:
+                                        st.error("📉 Low Popularity Prediction")
+                                    
+                                    # Gauge chart
+                                    import plotly.graph_objects as go
+                                    fig = go.Figure(go.Indicator(
+                                        mode="gauge+number",
+                                        value=pred_value,
+                                        domain={'x': [0, 1], 'y': [0, 1]},
+                                        title={'text': "Popularity Score"},
+                                        gauge={
+                                            'axis': {'range': [0, 100]},
+                                            'bar': {'color': "darkblue"},
+                                            'steps': [
+                                                {'range': [0, 30], 'color': "lightgray"},
+                                                {'range': [30, 50], 'color': "lightyellow"},
+                                                {'range': [50, 70], 'color': "lightgreen"},
+                                                {'range': [70, 100], 'color': "green"}
+                                            ],
+                                            'threshold': {
+                                                'line': {'color': "red", 'width': 4},
+                                                'thickness': 0.75,
+                                                'value': 60
+                                            }
+                                        }
+                                    ))
+                                    st.plotly_chart(fig, use_container_width=True)
+                            
+                        except Exception as e:
+                            st.error(f"❌ Prediction failed: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+            
+    with tab3:
+        st.markdown("#### System Architecture")
+        
+        st.markdown("""
+        ```
+        ┌─────────────────────────────────────────────────────────────┐
+        │                    USER INTERFACE (Streamlit)                │
+        └─────────────────────────────────────────────────────────────┘
+                                      │
+                    ┌─────────────────┼─────────────────┐
+                    │                 │                 │
+                    ▼                 ▼                 ▼
+        ┌───────────────────┐ ┌───────────────┐ ┌───────────────────┐
+        │ Emotion Detection │ │   Clustering  │ │    Popularity     │
+        │       (CNN)       │ │   (K-Means)   │ │    Prediction     │
+        └───────────────────┘ └───────────────┘ └───────────────────┘
+                    │                 │                 │
+                    └─────────────────┼─────────────────┘
+                                      │
+                                      ▼
+                    ┌─────────────────────────────────────┐
+                    │       Emotion-Music Mapper          │
+                    │   (Bridges CV → Music Clusters)     │
+                    └─────────────────────────────────────┘
+                                      │
+                                      ▼
+                    ┌─────────────────────────────────────┐
+                    │    Personalized Playlist Output     │
+                    └─────────────────────────────────────┘
+        ```
+        """)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total Tracks", len(music_data))
+        with col2:
+            n_clusters = music_data['cluster'].nunique() if 'cluster' in music_data.columns else 0
+            st.metric("Music Clusters", n_clusters)
+        with col3:
+            st.metric("Emotion Classes", 7)
+            
+        # Show dataset info
+        st.markdown("#### Dataset Information")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Columns in Dataset:**")
+            st.write(", ".join(music_data.columns.tolist()[:15]))
+            if len(music_data.columns) > 15:
+                st.caption(f"...and {len(music_data.columns) - 15} more columns")
+        with col2:
+            st.markdown("**Numeric Features:**")
+            numeric = music_data.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns.tolist()
+            st.write(", ".join(numeric[:10]))
+            if len(numeric) > 10:
+                st.caption(f"...and {len(numeric) - 10} more features")
+
+
+def get_emotion_emoji(emotion: str) -> str:
+    """Get emoji for emotion."""
+    emoji_map = {
+        'Happy': '😊',
+        'Sad': '😢',
+        'Angry': '😠',
+        'Fear': '😨',
+        'Surprise': '😲',
+        'Disgust': '🤢',
+        'Neutral': '😐'
+    }
+    return emoji_map.get(emotion, '🎵')
+
+
+def display_recommendations(models, music_data, emotion):
+    """Display song recommendations for given emotion."""
+    st.markdown("### 🎵 Your Personalized Playlist")
+    
+    with st.spinner("Finding perfect songs for your mood..."):
+        try:
+            recommendations = models['mapper'].recommend_songs(
+                music_data,
+                emotion,
+                n_recommendations=10
+            )
+            
+            if recommendations.empty:
+                st.warning("No recommendations found for this mood. Try different data or emotions.")
+                return
+            
+            st.success(f"✅ Found {len(recommendations)} songs matching your {emotion} mood!")
+            
+            # Display as cards
+            for idx, song in recommendations.iterrows():
+                track = song.get('track_name', 'Unknown Track')
+                artist = song.get('artists', 'Unknown Artist')
+                popularity = song.get('popularity', song.get('predicted_popularity', 0))
+                score = song.get('emotion_match_score', 0)
+                
+                # Get key audio features
+                energy = song.get('energy', 0)
+                valence = song.get('valence', 0)
+                tempo = song.get('tempo', 0)
+                
+                st.markdown(f"""
+                <div class="song-card">
+                    <h3 style="margin: 0; color: #ffffff;">🎵 {track}</h3>
+                    <p style="margin: 0.5rem 0; color: #1DB954; font-weight: 600;">{artist}</p>
+                    <p style="margin: 0.5rem 0; color: #b3b3b3; font-size: 0.9rem;">
+                        Match Score: {score:.1f}% • Popularity: {popularity:.0f}
+                    </p>
+                    <p style="margin: 0.5rem 0 0 0; color: #b3b3b3; font-size: 0.85rem;">
+                        Energy: {energy:.2f} • Valence: {valence:.2f} • Tempo: {tempo:.0f} BPM
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+        except Exception as e:
+            st.error(f"❌ Error generating recommendations: {e}")
+
+
+def train_popularity_model(models, music_data, model_type):
+    """Train popularity prediction model."""
+    with st.spinner(f"Training {model_type}..."):
+        try:
+            # Get features
+            numeric_cols = music_data.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns.tolist()
+            exclude = ['cluster', 'id', 'track_id', 'popularity', 'predicted_popularity', 'index']
+            available = [f for f in numeric_cols if f.lower() not in [e.lower() for e in exclude]]
+            
+            priority_features = ['danceability', 'energy', 'valence', 'loudness', 'tempo', 
+                               'acousticness', 'speechiness', 'instrumentalness', 'liveness', 'duration_ms']
+            features = [f for f in priority_features if f in available]
+            
+            if not features:
+                features = available[:10]
+            
+            if not features:
+                st.error("❌ No numeric features found for prediction")
+                return
+            
+            # Check for target
+            if 'popularity' not in music_data.columns or music_data['popularity'].isna().all():
+                st.error("❌ No popularity data found. Cannot train model.")
+                return
+            
+            # Prepare data
+            X = music_data[features].fillna(0)
+            y = music_data['popularity'].fillna(music_data['popularity'].mean())
+            
+            # Train based on model type
+            if "Gradient Boosting" in model_type:
+                from sklearn.ensemble import GradientBoostingRegressor
+                model = GradientBoostingRegressor(n_estimators=100, random_state=42)
+            elif "Random Forest" in model_type:
+                from sklearn.ensemble import RandomForestRegressor
+                model = RandomForestRegressor(n_estimators=100, random_state=42)
+            else:  # Linear Regression
+                from sklearn.linear_model import Ridge
+                model = Ridge(alpha=1.0)
+            
+            model.fit(X, y)
+            models['predictor'].best_model = model
+            models['predictor'].model_name = model_type
+            
+            # Make predictions
+            predictions = model.predict(X)
+            music_data['predicted_popularity'] = predictions
+            
+            st.success(f"✅ {model_type} trained successfully!")
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"❌ Training failed: {e}")
+
+
+if __name__ == "__main__":
+    main()
+
+

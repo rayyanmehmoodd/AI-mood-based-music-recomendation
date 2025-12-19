@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data files (keeping raw data but excluding processed)
+data/processed/*.pkl
+
+# OS
+.DS_Store
+.vscode/
+*.swp
+*.swo
+
+# Streamlit
+.streamlit/
+
+# IDEs
+.idea/
+*.iml
+
+# Logs
+*.log
